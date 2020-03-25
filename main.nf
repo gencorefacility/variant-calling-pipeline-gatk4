@@ -1,5 +1,8 @@
-/* GATK4 Variant Calling Pipeline 
- * Usage: nextflow run main.nf -with-singularity 'genericdata/snp-pipeline'
+/*  GATK4 Variant Calling Pipeline 
+ *  Usage: nextflow run gencorefacility/variant-calling-pipeline-gatk4 -with-docker gencorefacility/variant-calling-pipeline-gatk4 
+ *
+ *  Author: Mohammed Khalfan < mkhalfan@nyu.edu >
+ *  NYU Center for Genetics and System Biology 2020
  */
 
 // Setting some defaults here,
@@ -8,13 +11,15 @@ params.out = "${params.outdir}/out"
 params.tmpdir = "${params.outdir}/gatk_temp"
 params.snpeff_data = "${params.outdir}/snpeff_data"
 
+// Print some stuff here
 println "reads: $params.reads"
 println "ref: $params.ref"
-println "outdir: $params.out"
+println "output: $params.out"
 println "gatk temp dir: $params.tmpdir"
 println "snpeff db: $params.snpeff_db"
 println "snpeff data: $params.snpeff_data"
 
+// Setup the reference file
 ref = file(params.ref)
 
 /* Prepare the fastq read pairs for input.
@@ -183,14 +188,14 @@ process filterSnps {
     publishDir "${params.out}/filtered_snps", mode:'copy'
     
     input:
-    set val(pair_id), \
-	val(round), \
-	file(raw_snps) \
-	from raw_snps_ch
+    set val(pair_id),
+	val(round),
+	file(raw_snps) from raw_snps_ch
 
     output:
-    set val(pair_id), val(round), \
-	file("${pair_id}_filtered_snps_${round}.vcf"), \
+    set val(pair_id), 
+	val(round),
+	file("${pair_id}_filtered_snps_${round}.vcf"),
 	file("${pair_id}_filtered_snps_${round}.vcf.idx") \
 	into filtered_snps_ch_1, filtered_snps_ch_2
 
@@ -203,7 +208,9 @@ process filterSnps {
 	-filter-name "QD_filter" -filter "QD < 2.0" \
 	-filter-name "FS_filter" -filter "FS > 60.0" \
 	-filter-name "MQ_filter" -filter "MQ < 40.0" \
-	-filter-name "SOR_filter" -filter "SOR > 4.0"
+	-filter-name "SOR_filter" -filter "SOR > 4.0" \
+	-filter-name "MQRankSum_filter" -filter "MQRankSum < -12.5" \
+	-filter-name "ReadPosRankSum_filter" -filter "ReadPosRankSum < -8.0"
     """
 }
 
@@ -218,10 +225,9 @@ process filterIndels {
 
     output:
     set val(pair_id), \
-	val(round), \
 	file("${pair_id}_filtered_indels_${round}.vcf"), \
 	file("${pair_id}_filtered_indels_${round}.vcf.idx") \
-	into filtered_indels_ch
+	into filtered_indels_for_recal
 
     script:
     """
@@ -235,24 +241,23 @@ process filterIndels {
     """
 }
 
-/* if round 1 (it[1] == 1), send snps and indels to BQSR for recal, and snps to qc
+/* if round 1 (it[1] == 1), send snps to BQSR for recal, and snps to qc
  * if round 2 (it[1] == 2), send snps to snpeff and qc
+ * todo: change this to use the branch operator
  */
 filtered_snps_ch_1.filter({it[1] == 1}).tap{filtered_snps_for_recal}.tap{snps_1_qc_ch}
 filtered_snps_ch_2.filter({it[1] == 2}).tap{snps_2_qc_ch}.tap{filtered_snps_for_snpeff}
-filtered_indels_ch.filter({it[1] == 1}).tap{filtered_indels_for_recal}
 
 process bqsr{
     publishDir "${params.out}/bqsr", mode:'copy'
 
     input:
     set val(pair_id), \
-	val(round_1), \
+	val(round), \
 	file(input_bam), \
 	val(round), \
 	file(filtered_snps), \
 	file(filtered_snps_index), \
-	val(round), \
 	file(filtered_indels), \
 	file(filtered_indels_index) \
 	from bam_for_bqsr
@@ -269,27 +274,43 @@ process bqsr{
 	file("${pair_id}_recal.bam") \
 	into recalibrated_bam_ch
 
-    // here is where we iterate the round
+    // here is where we iterate the round. 
+    // keep this dynamic to allow for doing 
+    // multiple rounds of bqsr.
+    // note: run SelectVariants to exclude 
+    // filtered variants from vcf before bqsr!
+    // todo: this step can be optimized potentially by 
+    // breaking out SelectVariants, BaseRecalibrator,
+    // and ApplyBQSR into individual processes 
     script:
     new_round=round + 1
     """
     echo "New Round: " $new_round
+    module load $GATK
+    gatk SelectVariants \
+	--exclude-filtered \
+	-V $filtered_snps \
+	-O ${pair_id}_bqsr_snps.vcf
+    gatk SelectVariants \
+        --exclude-filtered \
+        -V $filtered_indels \
+        -O ${pair_id}_bqsr_indels.vcf
     gatk BaseRecalibrator \
 	-R $ref \
 	-I $input_bam \
-	--known-sites $filtered_snps \
-	--known-sites $filtered_indels \
+	--known-sites ${pair_id}_bqsr_snps.vcf \
+	--known-sites ${pair_id}_bqsr_indels.vcf \
 	-O ${pair_id}_recal_data.table
     gatk ApplyBQSR \
         -R $ref \
         -I $input_bam \
         -bqsr ${pair_id}_recal_data.table \
-        -O ${pair_id}_recal.bam	
+        -O ${pair_id}_recal.bam \
     gatk BaseRecalibrator \
         -R $ref \
 	-I ${pair_id}_recal.bam \
-        --known-sites $filtered_snps \
-	--known-sites $filtered_indels \
+        --known-sites ${pair_id}_bqsr_snps.vcf \
+	--known-sites ${pair_id}_bqsr_indels.vcf \
 	-O ${pair_id}_post_recal_data.table
     """	
 }
@@ -338,20 +359,29 @@ process snpEff {
 
 process qc {
     input:
-    set val(pair_id), file ('*') from dedup_qc_ch
-    file '*' \
-	from metrics_qc_ch
-	.join(snps_1_qc_ch)
-	.join(snps_2_qc_ch)
+    set val(pair_id), \
+	file("${pair_id}_dedup_metrics.txt"), \
+	file("${pair_id}_alignment_metrics.txt"), \
+        file("${pair_id}_insert_metrics.txt"), \
+        file("${pair_id}_insert_size_histogram.pdf"), \
+        file("${pair_id}_depth_out.txt"), \
+	val(round_1), \
+        file("${pair_id}_filtered_snps_1.vcf"), \
+        file("${pair_id}_filtered_snps_1.vcf.idx"), \
+	val(round_2), \
+        file("${pair_id}_filtered_snps_2.vcf"), \
+        file("${pair_id}_filtered_snps_2.vcf.idx") \
+	from dedup_qc_ch
+	.join(metrics_qc_ch)
+        .join(snps_1_qc_ch)
+        .join(snps_2_qc_ch)
 
     output:
     file ("${pair_id}_report.csv") into qc_output
 
     script:
-    header = "ID,# reads,aligned reads,% aligned,aligned bases,read length,% paired, %dup, mean insert size,# SNPs pre-bqsr,# SNPs filtered pre-bqsr,# SNPs post-bqsr,# SNPs filtered post-bqsr,average coverage"
     """
-    echo $header > ${pair_id}_report.csv
-    parse_metrics.sh ${pair_id} >> ${pair_id}_report.csv
+    parse_metrics.sh ${pair_id} > ${pair_id}_report.csv
     """
 }
 
