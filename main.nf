@@ -305,7 +305,7 @@ process bqsr{
         -R $ref \
         -I $input_bam \
         -bqsr ${pair_id}_recal_data.table \
-        -O ${pair_id}_recal.bam \
+        -O ${pair_id}_recal.bam
     gatk BaseRecalibrator \
         -R $ref \
 	-I ${pair_id}_recal.bam \
