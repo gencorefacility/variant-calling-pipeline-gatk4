@@ -286,7 +286,6 @@ process bqsr{
     new_round=round + 1
     """
     echo "New Round: " $new_round
-    module load $GATK
     gatk SelectVariants \
 	--exclude-filtered \
 	-V $filtered_snps \
@@ -360,7 +359,7 @@ process snpEff {
 process qc {
     input:
     set val(pair_id), \
-	file("${pair_id}_dedup_metrics.txt"), \
+	file("x${pair_id}_dedup_metrics.txt"), \
 	file("${pair_id}_alignment_metrics.txt"), \
         file("${pair_id}_insert_metrics.txt"), \
         file("${pair_id}_insert_size_histogram.pdf"), \
