@@ -286,7 +286,6 @@ process bqsr{
     new_round=round + 1
     """
     echo "New Round: " $new_round
-    module load $GATK
     gatk SelectVariants \
 	--exclude-filtered \
 	-V $filtered_snps \
