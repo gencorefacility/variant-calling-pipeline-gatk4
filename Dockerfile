@@ -19,7 +19,8 @@ RUN yum -y install \
 	xz-devel \
 	curl-devel \
 	openssl-devel \
-	ncurses-devel
+	ncurses-devel \
+	graphviz
 
 
 ENV APPS_ROOT /apps
