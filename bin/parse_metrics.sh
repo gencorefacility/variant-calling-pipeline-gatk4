@@ -36,6 +36,6 @@ snps_3=$(grep -v '^#' ${ID}_raw_snps_recal.vcf | wc -l)
 snps_4=$(grep 'PASS' ${ID}_filtered_snps_final.vcf | wc -l)
 avg_coverage=$(awk '{sum+=$3} END { print sum/NR}' ${ID}_depth_out.txt)
 
-echo "ID,# reads,aligned reads,% aligned,aligned bases,read length,% paired, %dup, mean insert size,# SNPs pre bqsr,# SNPs filtered pre bqsr,# SNPs post bqsr,# SNPs filtered post-bqsr,average coverage"
+echo "ID,# reads,aligned reads,% aligned,aligned bases,read length,% paired, %dup, mean insert size,# SNPs pre bqsr,# SNPs filtered pre bqsr,# SNPs post bqsr,# SNPs filtered post bqsr,average coverage"
 echo "$ID,$ALIGNMENT_METRICS,$DUP_PCT,$MEAN_INSERT_SIZE,$snps_1,$snps_2,$snps_3,$snps_4,$avg_coverage"
 
